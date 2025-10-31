@@ -5,3 +5,5 @@ nltk
 PyPDF2
 python-docx
 requests
+torch>=2.0.0
+transformers>=4.20.0
