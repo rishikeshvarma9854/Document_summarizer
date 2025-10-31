@@ -1063,17 +1063,6 @@ def main():
             help="Paste Google Drive, Google Docs, Dropbox, or direct file links"
         )
         
-        # API Key input (optional)
-        st.markdown("### 🔑 Hugging Face API Key (Optional)")
-        hf_token = st.text_input(
-            "Enter your Hugging Face API key for better model access",
-            type="password",
-            help="Get your free API key from https://huggingface.co/settings/tokens"
-        )
-        if hf_token:
-            Config.set_hf_token(hf_token)
-            st.success("✅ API key set successfully!")
-        
         # Summarization method selection
         st.markdown("### 🤖 AI Model Selection")
         summarization_method = st.selectbox(
