@@ -31,16 +31,27 @@ class Config:
     @classmethod
     def get_hf_token(cls):
         """Get Hugging Face API token from various sources."""
-        # Return hardcoded token first
-        if cls.HUGGINGFACE_API_KEY:
-            return cls.HUGGINGFACE_API_KEY
+        # Try Streamlit secrets first (for deployment)
+        try:
+            if hasattr(st, 'secrets') and 'HUGGINGFACE_API_KEY' in st.secrets:
+                return st.secrets['HUGGINGFACE_API_KEY']
+        except:
+            pass
             
-        # Try session state
+        # Try environment variable
+        env_token = os.getenv('HUGGINGFACE_API_KEY')
+        if env_token:
+            return env_token
+            
+        # Try session state (user input)
         if hasattr(st, 'session_state') and 'hf_token' in st.session_state:
             return st.session_state['hf_token']
         
-        # Try environment variable
-        return os.getenv('HUGGINGFACE_API_KEY')
+        # Return hardcoded token if set
+        if cls.HUGGINGFACE_API_KEY:
+            return cls.HUGGINGFACE_API_KEY
+            
+        return None
     
     @classmethod
     def set_hf_token(cls, token):

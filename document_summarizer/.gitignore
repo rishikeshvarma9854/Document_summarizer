@@ -1,2 +1,4 @@
 clear_model_cache.py
-PPT_CONTENT.md
+PPT_CONTENT.md# St
+reamlit secrets (contains API keys)
+.streamlit/secrets.toml
