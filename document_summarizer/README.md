@@ -1,6 +1,6 @@
 # 🤖 Smart Document Summarizer
 
-An intelligent document summarization system that transforms your documents into clean, structured summaries. Upload PDF, DOCX, or TXT files and get AI-powered summaries with advanced text cleaning and professional formatting.
+An advanced document summarization system powered by state-of-the-art transformer models (T5, BART, FLAN-T5) with intelligent text processing. Upload files or paste URLs from Google Drive, Google Docs, Dropbox, and other platforms to get AI-powered summaries with professional formatting.
 
 ## ✨ Key Features
 
@@ -8,6 +8,7 @@ An intelligent document summarization system that transforms your documents into
 - **PDF Support**: Extracts text from research papers, reports, articles, and books
 - **DOCX Support**: Processes Word documents, essays, proposals, and letters  
 - **TXT Support**: Handles plain text files, notes, scripts, and logs
+- **URL Support**: Process documents from Google Drive, Google Docs, Dropbox, and direct links
 - **Drag & Drop Interface**: Beautiful upload area with visual feedback
 
 ### 🧹 **Advanced Text Cleaning**
@@ -18,14 +19,14 @@ An intelligent document summarization system that transforms your documents into
 - **Code Block Filtering**: Eliminates technical jargon and programming snippets
 - **Meaningful Content Extraction**: Keeps only readable, informative sentences
 
-### 🤖 **Smart Summarization**
-- **Enhanced TextRank Algorithm**: Improved sentence ranking with stopword filtering
-- **Intelligent Sentence Selection**: Includes first and last sentences for context
-- **Adjustable Compression**: Control summary length from 10%-80% of original
-- **Minimum Sentence Guarantees**:
-  - Short (10%-20%): At least 4 sentences
-  - Balanced (20%-40%): At least 6 sentences
-  - Detailed (40%+): At least 8 sentences
+### 🤖 **AI-Powered Summarization with Transformers**
+- **T5 Transformer (Default)**: Google's text-to-text transfer transformer for advanced abstractive summarization
+- **BART Model**: Facebook's bidirectional auto-regressive transformer for high-quality generation
+- **FLAN-T5 (Advanced)**: Google's instruction-tuned T5 model for better summarization quality
+- **Hugging Face Integration**: Hardcoded API key for seamless model access
+- **TextRank Fallback**: Fast extractive summarization when transformers aren't available
+- **Clean Formatting**: Professional paragraph-style output like NotebookLM
+- **Adjustable Compression**: AI-optimized summary length from 10%-80% of original
 
 ### 📝 **Professional Formatting**
 - **Structured Output**: Organized with Overview, Key Points, Additional Details, and Conclusion
@@ -65,6 +66,15 @@ pip install -r requirements.txt
 # Run the application
 streamlit run app.py
 ```
+
+### 🔗 URL Support
+The app now supports processing documents from:
+- **Google Drive**: `https://drive.google.com/file/d/...`
+- **Google Docs**: `https://docs.google.com/document/d/...`
+- **Dropbox**: Direct file links
+- **Any direct file URL**: PDF, TXT, DOCX links
+
+
 
 ## 📊 How It Works
 

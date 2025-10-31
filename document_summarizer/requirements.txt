@@ -1,8 +1,15 @@
 streamlit
-numpy
+numpy==2.3.4
 pandas
 scikit-learn
 nltk
 PyPDF2
 python-docx
 reportlab
+torch==2.5.1
+torchvision==0.20.1
+torchaudio==2.5.1
+transformers==4.57.1
+protobuf==4.25.3
+accelerate
+requests

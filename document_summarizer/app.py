@@ -9,6 +9,9 @@ from collections import Counter
 import io
 from datetime import datetime
 import nltk
+import requests
+import urllib.parse
+from config import Config
 
 # Download required NLTK data for cloud deployment
 @st.cache_resource
@@ -197,11 +200,122 @@ class AdvancedTextCleaner:
         
         return technical_count > len(words) * 0.4
 
+class URLProcessor:
+    """Process documents from URLs and shared links."""
+    
+    def __init__(self):
+        self.text_cleaner = AdvancedTextCleaner()
+    
+    def convert_google_drive_url(self, url):
+        """Convert Google Drive sharing URL to direct download URL."""
+        if "drive.google.com" in url:
+            if "/file/d/" in url:
+                # Extract file ID from sharing URL
+                file_id = url.split("/file/d/")[1].split("/")[0]
+                return f"https://drive.google.com/uc?export=download&id={file_id}"
+        return url
+    
+    def convert_google_docs_url(self, url):
+        """Convert Google Docs URL to plain text export URL."""
+        if "docs.google.com" in url:
+            if "/document/d/" in url:
+                # Extract document ID
+                doc_id = url.split("/document/d/")[1].split("/")[0]
+                return f"https://docs.google.com/document/d/{doc_id}/export?format=txt"
+        return url
+    
+    def download_from_url(self, url):
+        """Download content from URL."""
+        try:
+            # Convert special URLs
+            if "drive.google.com" in url:
+                url = self.convert_google_drive_url(url)
+            elif "docs.google.com" in url:
+                url = self.convert_google_docs_url(url)
+            
+            # Download with headers to mimic browser
+            headers = {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+            }
+            
+            response = requests.get(url, headers=headers, timeout=30)
+            response.raise_for_status()
+            
+            return response.content, response.headers.get('content-type', '')
+            
+        except Exception as e:
+            return None, f"Error downloading from URL: {str(e)}"
+    
+    def process_url_content(self, content, content_type, url):
+        """Process downloaded content based on type."""
+        try:
+            # Determine file type from content-type or URL
+            if 'pdf' in content_type.lower() or url.lower().endswith('.pdf'):
+                return self._process_pdf_content(content)
+            elif 'text' in content_type.lower() or url.lower().endswith('.txt'):
+                return self._process_text_content(content)
+            elif 'document' in content_type.lower() or 'docs.google.com' in url:
+                return self._process_text_content(content)
+            else:
+                # Try to process as text
+                return self._process_text_content(content)
+                
+        except Exception as e:
+            return None, f"Error processing content: {str(e)}"
+    
+    def _process_pdf_content(self, content):
+        """Process PDF content from bytes."""
+        try:
+            import PyPDF2
+            from io import BytesIO
+            
+            pdf_file = BytesIO(content)
+            pdf_reader = PyPDF2.PdfReader(pdf_file)
+            text = ""
+            for page in pdf_reader.pages:
+                text += page.extract_text() + "\n"
+            
+            # Apply cleaning
+            cleaned_text = self.text_cleaner.clean_academic_content(text)
+            meaningful_text = self.text_cleaner.extract_meaningful_content(cleaned_text)
+            
+            return meaningful_text.strip(), None
+            
+        except Exception as e:
+            return None, f"Error processing PDF: {str(e)}"
+    
+    def _process_text_content(self, content):
+        """Process text content from bytes."""
+        try:
+            # Try different encodings
+            encodings = ['utf-8', 'latin-1', 'cp1252']
+            text = None
+            
+            for encoding in encodings:
+                try:
+                    text = content.decode(encoding)
+                    break
+                except UnicodeDecodeError:
+                    continue
+            
+            if text is None:
+                return None, "Could not decode text content"
+            
+            # Apply cleaning
+            cleaned_text = self.text_cleaner.clean_academic_content(text)
+            meaningful_text = self.text_cleaner.extract_meaningful_content(cleaned_text)
+            
+            return meaningful_text.strip(), None
+            
+        except Exception as e:
+            return None, f"Error processing text: {str(e)}"
+
 class DocumentProcessor:
     """Process different document formats with advanced cleaning."""
     
     def __init__(self):
         self.text_cleaner = AdvancedTextCleaner()
+        self.url_processor = URLProcessor()
     
     def extract_text_from_pdf(self, pdf_file):
         """Extract and clean text from PDF file."""
@@ -276,51 +390,126 @@ class DocumentProcessor:
             return self.extract_text_from_txt(uploaded_file)
         else:
             return None, f"Unsupported file format: {file_extension}"
+    
+    def process_document_url(self, url):
+        """Process document from URL."""
+        if not url or not url.strip():
+            return None, "No URL provided"
+        
+        url = url.strip()
+        
+        # Validate URL
+        if not (url.startswith('http://') or url.startswith('https://')):
+            return None, "Invalid URL. Please provide a complete URL starting with http:// or https://"
+        
+        # Download content
+        content, error_or_content_type = self.url_processor.download_from_url(url)
+        
+        if content is None:
+            return None, error_or_content_type
+        
+        # Process content
+        return self.url_processor.process_url_content(content, error_or_content_type, url)
 
 class SummaryFormatter:
     """Format summaries with proper structure and headings."""
     
     def format_summary(self, summary_text, original_filename):
-        """Format summary with headings and structure."""
-        sentences = [s.strip() for s in summary_text.split('.') if s.strip() and len(s.strip()) > 10]
+        """Format summary in clean, readable paragraph style."""
+        # Clean the summary text first
+        summary_text = self._clean_summary_text(summary_text)
+        
+        # Split into sentences more intelligently
+        sentences = self._split_into_sentences(summary_text)
+        
+        if not sentences:
+            return f"## Summary of {original_filename}\n\nNo meaningful content could be extracted."
         
         if len(sentences) <= 2:
-            return f"# Summary of {original_filename}\n\n{summary_text}"
+            return f"## Summary of {original_filename}\n\n{' '.join(sentences)}"
         
-        # Group sentences into sections
-        formatted_summary = f"# Summary of {original_filename}\n\n"
+        # Create clean, well-structured summary
+        formatted_summary = f"## Summary of {original_filename}\n\n"
         
-        if len(sentences) >= 4:
-            # Add overview section
-            formatted_summary += "## Overview\n\n"
-            formatted_summary += f"{sentences[0]}.\n\n"
-            
-            # Add key points section
-            formatted_summary += "## Key Points\n\n"
-            
-            # Take middle sentences as key points
-            key_points = sentences[1:min(len(sentences)-1, 4)]
-            for i, point in enumerate(key_points, 1):
-                formatted_summary += f"**{i}.** {point.strip()}.\n\n"
-            
-            # Add conclusion if there are enough sentences
-            if len(sentences) > 4:
-                formatted_summary += "## Additional Details\n\n"
-                remaining_sentences = sentences[4:]
-                for sentence in remaining_sentences:
-                    formatted_summary += f"• {sentence.strip()}.\n\n"
-                    
-            # Add conclusion
-            if len(sentences) > 1:
-                formatted_summary += "## Conclusion\n\n"
-                formatted_summary += f"{sentences[-1]}.\n\n"
-        else:
-            # Simple format for short summaries
-            formatted_summary += "## Key Information\n\n"
-            for i, sentence in enumerate(sentences, 1):
-                formatted_summary += f"**{i}.** {sentence.strip()}.\n\n"
+        # Group sentences into coherent paragraphs
+        paragraphs = self._create_paragraphs(sentences)
+        
+        # Join paragraphs with proper spacing
+        formatted_summary += '\n\n'.join(paragraphs)
         
         return formatted_summary.strip()
+    
+    def _clean_summary_text(self, text):
+        """Clean and normalize summary text."""
+        import re
+        
+        # Remove extra whitespace and normalize
+        text = re.sub(r'\s+', ' ', text).strip()
+        
+        # Remove redundant phrases
+        redundant_phrases = [
+            r'in summary,?\s*',
+            r'to summarize,?\s*',
+            r'in conclusion,?\s*',
+            r'overall,?\s*',
+            r'this document\s*',
+            r'the text\s*',
+            r'the document\s*'
+        ]
+        
+        for phrase in redundant_phrases:
+            text = re.sub(phrase, '', text, flags=re.IGNORECASE)
+        
+        # Fix capitalization after cleaning
+        if text and not text[0].isupper():
+            text = text[0].upper() + text[1:]
+        
+        return text
+    
+    def _split_into_sentences(self, text):
+        """Split text into meaningful sentences."""
+        import re
+        
+        # Split on sentence boundaries
+        sentences = re.split(r'[.!?]+', text)
+        
+        # Clean and filter sentences
+        cleaned_sentences = []
+        for sentence in sentences:
+            sentence = sentence.strip()
+            
+            # Skip very short or meaningless sentences
+            if len(sentence.split()) < 4:
+                continue
+            
+            # Ensure proper capitalization
+            if sentence and not sentence[0].isupper():
+                sentence = sentence[0].upper() + sentence[1:]
+            
+            cleaned_sentences.append(sentence)
+        
+        return cleaned_sentences
+    
+    def _create_paragraphs(self, sentences):
+        """Group sentences into coherent paragraphs."""
+        if len(sentences) <= 3:
+            # Single paragraph for short summaries
+            return ['. '.join(sentences) + '.']
+        
+        elif len(sentences) <= 6:
+            # Two paragraphs for medium summaries
+            mid_point = len(sentences) // 2
+            para1 = '. '.join(sentences[:mid_point]) + '.'
+            para2 = '. '.join(sentences[mid_point:]) + '.'
+            return [para1, para2]
+        
+        else:
+            # Three paragraphs for longer summaries
+            third = len(sentences) // 3
+            para1 = '. '.join(sentences[:third]) + '.'
+            para2 = '. '.join(sentences[third:third*2]) + '.'
+            para3 = '. '.join(sentences[third*2:]) + '.'
+            return [para1, para2, para3]
 
 class SmartTextRankSummarizer:
     """Enhanced TextRank implementation with better sentence selection."""
@@ -440,22 +629,22 @@ class SmartTextRankSummarizer:
         return scores
     
     def summarize(self, text, compression_ratio=0.3, filename="document"):
-        """Generate smart extractive summary using TextRank."""
+        """Generate smart extractive summary using TextRank with improved coherence."""
         sentences = self.segment_sentences(text)
         
         if len(sentences) <= 3:
             raw_summary = ' '.join(sentences)
         else:
-            # Calculate number of sentences based on compression ratio (more generous)
-            base_sentences = max(5, int(len(sentences) * compression_ratio))
+            # Calculate number of sentences for coherent summary
+            base_sentences = max(6, int(len(sentences) * compression_ratio))
             
-            # Ensure we get a good number of sentences for comprehensive summary
+            # Ensure we get enough sentences for coherent paragraphs
             if compression_ratio <= 0.2:
-                num_sentences = max(4, base_sentences)  # At least 4 sentences for very short
+                num_sentences = max(6, base_sentences)  # At least 6 for coherence
             elif compression_ratio <= 0.4:
-                num_sentences = max(6, base_sentences)  # At least 6 sentences for balanced
+                num_sentences = max(8, base_sentences)  # At least 8 for balanced
             else:
-                num_sentences = max(8, base_sentences)  # At least 8 sentences for detailed
+                num_sentences = max(10, base_sentences)  # At least 10 for detailed
             
             num_sentences = min(num_sentences, len(sentences))
             
@@ -464,22 +653,30 @@ class SmartTextRankSummarizer:
                 similarity_matrix = self._build_similarity_matrix(sentences)
                 scores = self._textrank_scores(similarity_matrix)
                 
-                # Get top sentences with better distribution
+                # Get top sentences with better distribution for coherence
                 top_indices = np.argsort(scores)[-num_sentences:][::-1]
                 
-                # Ensure we include first and last sentences for context
+                # Ensure we include first sentence for context
                 if 0 not in top_indices and len(sentences) > 3:
                     top_indices = np.append(top_indices[:-1], 0)
-                if (len(sentences)-1) not in top_indices and len(sentences) > 5:
+                
+                # Include last sentence if document is long enough
+                if (len(sentences)-1) not in top_indices and len(sentences) > 8:
                     top_indices = np.append(top_indices[:-1], len(sentences)-1)
                 
-                top_indices = sorted(top_indices)  # Maintain original order
+                # Sort to maintain document flow
+                top_indices = sorted(top_indices)
                 
+                # Select sentences and create coherent flow
                 summary_sentences = [sentences[i] for i in top_indices]
-                raw_summary = '. '.join(summary_sentences) + '.'
+                
+                # Improve sentence connections for better flow
+                coherent_sentences = self._improve_sentence_flow(summary_sentences)
+                raw_summary = '. '.join(coherent_sentences) + '.'
+                
             except Exception as e:
                 st.error(f"TextRank failed: {e}")
-                # Better fallback - distribute sentences across the document
+                # Better fallback with document structure awareness
                 step = max(1, len(sentences) // num_sentences)
                 selected_indices = list(range(0, len(sentences), step))[:num_sentences]
                 raw_summary = '. '.join([sentences[i] for i in selected_indices]) + '.'
@@ -487,6 +684,26 @@ class SmartTextRankSummarizer:
         # Format the summary with proper structure
         formatted_summary = self.formatter.format_summary(raw_summary, filename)
         return formatted_summary
+    
+    def _improve_sentence_flow(self, sentences):
+        """Improve sentence flow and coherence."""
+        if len(sentences) <= 2:
+            return sentences
+        
+        # Remove redundant information and improve transitions
+        improved_sentences = []
+        prev_words = set()
+        
+        for sentence in sentences:
+            words = set(sentence.lower().split())
+            # Check for significant overlap with previous sentences
+            overlap = len(words.intersection(prev_words)) / len(words) if words else 0
+            
+            if overlap < 0.7:  # Keep sentences with less than 70% overlap
+                improved_sentences.append(sentence)
+                prev_words.update(words)
+        
+        return improved_sentences if improved_sentences else sentences
 
 @st.cache_resource
 def load_components():
@@ -499,6 +716,74 @@ def load_components():
         st.error(f"Error loading components: {e}")
         # Fallback without caching
         return DocumentProcessor(), SmartTextRankSummarizer()
+
+def load_transformer_models():
+    """Load transformer models with caching and API key support."""
+    try:
+        # Import transformers
+        from transformers import pipeline
+        import warnings
+        warnings.filterwarnings("ignore", category=UserWarning)
+        
+        # Check for Hugging Face API key
+        hf_token = Config.get_hf_token()
+        
+        # Create summarization pipelines with working models
+        models = {}
+        
+        # List of working models (in order of preference) - only load T5 for reliability
+        model_configs = [
+            ('t5', 't5-small'),
+        ]
+        
+        # Try to load additional models if T5 works
+        additional_models = [
+            ('bart', 'facebook/bart-large-cnn'),
+            ('flan-t5', 'google/flan-t5-small')
+        ]
+        
+        loaded_models = []
+        
+        # Load T5 first (most reliable)
+        for model_name, model_path in model_configs:
+            try:
+                if hf_token:
+                    model = pipeline("summarization", model=model_path, token=hf_token)
+                else:
+                    model = pipeline("summarization", model=model_path)
+                
+                models[model_name] = model
+                loaded_models.append(model_name.upper())
+                
+            except Exception as e:
+                continue
+        
+        # Try to load additional models (optional)
+        for model_name, model_path in additional_models:
+            try:
+                if hf_token:
+                    model = pipeline("summarization", model=model_path, token=hf_token)
+                else:
+                    model = pipeline("summarization", model=model_path)
+                
+                models[model_name] = model
+                loaded_models.append(model_name.upper())
+                
+            except Exception as e:
+                continue
+        
+        if models:
+            st.success(f"🤖 Ready with {len(models)} model(s): {', '.join(loaded_models)}")
+            return models
+        else:
+            st.error("❌ No transformer models could be loaded - using TextRank fallback")
+            return None
+        
+    except Exception as e:
+        st.warning(f"⚠️ Transformer import failed: {str(e)[:100]}...")
+        st.info("💡 Using enhanced TextRank as fallback.")
+        return None
+    return DocumentProcessor(), SmartTextRankSummarizer()
 
 def apply_custom_css():
     """Apply custom CSS for better UI."""
@@ -776,7 +1061,7 @@ def main():
     st.markdown("""
     <div class="main-header">
         <h1>🤖 Smart Document Summarizer</h1>
-        <p>Upload your documents and get AI-powered summaries with advanced text cleaning</p>
+        <p>Upload files or paste URLs to get AI-powered summaries with advanced text cleaning</p>
     </div>
     """, unsafe_allow_html=True)
     
@@ -800,6 +1085,34 @@ def main():
             help="Supported formats: PDF, DOCX, TXT"
         )
         
+        st.markdown("**OR**")
+        
+        # URL input for shared documents
+        document_url = st.text_input(
+            "🔗 Enter Document URL",
+            placeholder="https://drive.google.com/file/d/... or https://docs.google.com/document/d/...",
+            help="Paste Google Drive, Google Docs, Dropbox, or direct file links"
+        )
+        
+        # API Key input (optional)
+        st.markdown("### 🔑 Hugging Face API Key (Optional)")
+        hf_token = st.text_input(
+            "Enter your Hugging Face API key for better model access",
+            type="password",
+            help="Get your free API key from https://huggingface.co/settings/tokens"
+        )
+        if hf_token:
+            Config.set_hf_token(hf_token)
+            st.success("✅ API key set successfully!")
+        
+        # Summarization method selection
+        st.markdown("### 🤖 AI Model Selection")
+        summarization_method = st.selectbox(
+            "Choose Summarization Approach",
+            ["🧠 T5 Transformer (Default)", "📚 BART Transformer", "🚀 FLAN-T5 (Advanced)", "🔧 TextRank (Fallback)"],
+            help="Select the AI model for summarization"
+        )
+        
         # Compression ratio slider
         st.markdown("### ⚙️ Summary Settings")
         compression_ratio = st.slider(
@@ -811,16 +1124,26 @@ def main():
             help="Lower values = shorter summaries"
         )
         
-        # Display compression info
-        if compression_ratio <= 0.2:
-            st.info("📝 Very Short Summary (Key points only)")
-        elif compression_ratio <= 0.4:
-            st.info("📄 Balanced Summary (Main ideas)")
+        # Display method info
+        if "TextRank" in summarization_method:
+            st.info("⚡ Fast extractive summarization using graph-based ranking")
+        elif "T5" in summarization_method:
+            st.info("🧠 Advanced abstractive summarization using T5 transformer (Default)")
+        elif "BART" in summarization_method:
+            st.info("📚 High-quality abstractive summarization using BART transformer")
+        elif "FLAN-T5" in summarization_method:
+            st.info("🚀 Advanced instruction-tuned T5 model for better summarization")
+
         else:
-            st.info("📚 Detailed Summary (Comprehensive)")
+            st.info("⚡ Fast extractive summarization using graph-based ranking")
     
     with col2:
         st.markdown("### 📊 Document Analysis")
+        
+        # Handle both file upload and URL input
+        extracted_text = None
+        error = None
+        original_name = "document"
         
         if uploaded_file is not None:
             # Display file info with nice styling
@@ -835,19 +1158,46 @@ def main():
             # Process the uploaded file
             with st.spinner("🔍 Extracting and cleaning text..."):
                 extracted_text, error = doc_processor.process_uploaded_file(uploaded_file)
+            original_name = uploaded_file.name.rsplit('.', 1)[0]
             
-            if error:
-                st.error(f"❌ {error}")
-                
-                if "not installed" in error:
-                    st.markdown("""
-                    **📦 Install required packages:**
-                    ```bash
-                    pip install PyPDF2 python-docx
-                    ```
-                    """)
+        elif document_url:
+            # Display URL info
+            st.markdown(f"""
+            <div class="metric-container">
+                <h4>🔗 Document URL</h4>
+                <p>Source: {document_url[:50]}...</p>
+                <p>Type: Web Document</p>
+            </div>
+            """, unsafe_allow_html=True)
             
-            elif extracted_text:
+            # Process the URL
+            with st.spinner("🌐 Downloading and processing document from URL..."):
+                extracted_text, error = doc_processor.process_document_url(document_url)
+            
+            # Extract name from URL
+            try:
+                from urllib.parse import urlparse
+                parsed_url = urlparse(document_url)
+                original_name = parsed_url.path.split('/')[-1] or "web_document"
+                if '.' in original_name:
+                    original_name = original_name.rsplit('.', 1)[0]
+            except:
+                original_name = "web_document"
+        
+        # Handle processing results
+        if error:
+            st.error(f"❌ {error}")
+            
+            if "not installed" in error:
+                st.markdown("""
+                **📦 Install required packages:**
+                ```bash
+                pip install PyPDF2 python-docx requests
+                ```
+                """)
+        
+        elif extracted_text:
+            # Show extracted text info
                 # Show extracted text info
                 word_count = len(extracted_text.split())
                 char_count = len(extracted_text)
@@ -866,34 +1216,240 @@ def main():
                 
                 # Generate summary button
                 if st.button("🚀 Generate Smart Summary", type="primary", use_container_width=True):
-                    with st.spinner("🤖 Creating intelligent summary..."):
+                    
+                    # Load transformer models if needed
+                    if "Transformer" in summarization_method or "FLAN-T5" in summarization_method:
+                        with st.spinner("🤖 Loading AI models..."):
+                            transformer_models = load_transformer_models()
+                    else:
+                        transformer_models = None
+                    
+                    with st.spinner("🧠 Creating intelligent summary with AI..."):
                         try:
-                            original_name = uploaded_file.name.rsplit('.', 1)[0]
-                            
-                            # Debug info
-                            st.write(f"Debug: Summarizer type: {type(summarizer)}")
-                            st.write(f"Debug: Method signature: {summarizer.summarize.__code__.co_varnames}")
-                            
-                            summary = summarizer.summarize(
-                                text=extracted_text, 
-                                compression_ratio=compression_ratio, 
-                                filename=original_name
-                            )
+                            if "T5" in summarization_method:
+                                # Use T5 transformer (abstractive) - DEFAULT
+                                available_models = ['t5', 'flan-t5']
+                                model_found = None
+                                
+                                if transformer_models:
+                                    for model_name in available_models:
+                                        if model_name in transformer_models:
+                                            model_found = transformer_models[model_name]
+                                            break
+                                
+                                if model_found:
+                                    max_length = max(100, int(len(extracted_text.split()) * compression_ratio * 2))
+                                    min_length = max(30, max_length // 4)
+                                    
+                                    try:
+                                        # Chunk text if too long
+                                        if len(extracted_text.split()) > 1000:
+                                            chunks = [extracted_text[i:i+3000] for i in range(0, len(extracted_text), 3000)]
+                                            summaries = []
+                                            for chunk in chunks[:3]:  # Process max 3 chunks
+                                                chunk_summary = model_found(chunk, max_length=max_length//len(chunks), min_length=min_length//len(chunks))
+                                                summaries.append(chunk_summary[0]['summary_text'])
+                                            raw_summary = ' '.join(summaries)
+                                        else:
+                                            result = model_found(extracted_text, max_length=max_length, min_length=min_length)
+                                            raw_summary = result[0]['summary_text']
+                                        
+                                        summary = summarizer.formatter.format_summary(raw_summary, original_name)
+                                        st.info("🧠 Used T5 Transformer for advanced abstractive summarization (Default)")
+                                    except Exception as e:
+                                        st.warning(f"🔄 T5 generation failed: {str(e)[:50]}... using TextRank")
+                                        summary = summarizer.summarize(extracted_text, compression_ratio, original_name)
+                                else:
+                                    # Fallback to TextRank
+                                    st.warning("🔄 T5 model not available, using TextRank as fallback")
+                                    summary = summarizer.summarize(extracted_text, compression_ratio, original_name)
+                                
+                            elif "BART" in summarization_method:
+                                # Use BART transformer (abstractive)
+                                available_models = ['bart']  # Only use working BART model
+                                model_found = None
+                                
+                                if transformer_models:
+                                    for model_name in available_models:
+                                        if model_name in transformer_models:
+                                            model_found = transformer_models[model_name]
+                                            break
+                                
+                                if model_found:
+                                    max_length = max(100, int(len(extracted_text.split()) * compression_ratio * 2))
+                                    min_length = max(30, max_length // 4)
+                                    
+                                    try:
+                                        # Chunk text if too long
+                                        if len(extracted_text.split()) > 1000:
+                                            chunks = [extracted_text[i:i+3000] for i in range(0, len(extracted_text), 3000)]
+                                            summaries = []
+                                            for chunk in chunks[:3]:
+                                                chunk_summary = model_found(chunk, max_length=max_length//len(chunks), min_length=min_length//len(chunks))
+                                                summaries.append(chunk_summary[0]['summary_text'])
+                                            raw_summary = ' '.join(summaries)
+                                        else:
+                                            result = model_found(extracted_text, max_length=max_length, min_length=min_length)
+                                            raw_summary = result[0]['summary_text']
+                                        
+                                        summary = summarizer.formatter.format_summary(raw_summary, original_name)
+                                        st.info("📚 Used BART Transformer for high-quality abstractive summarization")
+                                    except Exception as e:
+                                        st.warning(f"🔄 BART generation failed: {str(e)[:50]}... using TextRank")
+                                        summary = summarizer.summarize(extracted_text, compression_ratio, original_name)
+                                else:
+                                    # Fallback to TextRank
+                                    st.warning("🔄 BART model not available, using TextRank as fallback")
+                                    summary = summarizer.summarize(extracted_text, compression_ratio, original_name)
+                                
+                            elif "FLAN-T5" in summarization_method:
+                                # Use FLAN-T5 transformer (advanced)
+                                available_models = ['flan-t5']
+                                model_found = None
+                                
+                                if transformer_models:
+                                    for model_name in available_models:
+                                        if model_name in transformer_models:
+                                            model_found = transformer_models[model_name]
+                                            break
+                                
+                                if model_found:
+                                    max_length = max(100, int(len(extracted_text.split()) * compression_ratio * 2))
+                                    min_length = max(30, max_length // 4)
+                                    
+                                    try:
+                                        # Chunk text if too long
+                                        if len(extracted_text.split()) > 1000:
+                                            chunks = [extracted_text[i:i+3000] for i in range(0, len(extracted_text), 3000)]
+                                            summaries = []
+                                            for chunk in chunks[:3]:
+                                                chunk_summary = model_found(chunk, max_length=max_length//len(chunks), min_length=min_length//len(chunks))
+                                                summaries.append(chunk_summary[0]['summary_text'])
+                                            raw_summary = ' '.join(summaries)
+                                        else:
+                                            result = model_found(extracted_text, max_length=max_length, min_length=min_length)
+                                            raw_summary = result[0]['summary_text']
+                                        
+                                        summary = summarizer.formatter.format_summary(raw_summary, original_name)
+                                        st.info("🚀 Used FLAN-T5 Transformer for advanced instruction-tuned summarization")
+                                    except Exception as e:
+                                        st.warning(f"🔄 FLAN-T5 generation failed: {str(e)[:50]}... using TextRank")
+                                        summary = summarizer.summarize(extracted_text, compression_ratio, original_name)
+                                else:
+                                    # Fallback to TextRank
+                                    st.warning("🔄 FLAN-T5 model not available, using TextRank as fallback")
+                                    summary = summarizer.summarize(extracted_text, compression_ratio, original_name)
+                                
+
+                            elif "TextRank" in summarization_method:
+                                # Use TextRank (extractive) - Fallback option
+                                summary = summarizer.summarize(extracted_text, compression_ratio, original_name)
+                                st.info("⚡ Used TextRank algorithm for fast extractive summarization")
+                                
+                            else:
+                                # Default to any available transformer, otherwise TextRank
+                                if transformer_models:
+                                    # Use the first available model
+                                    model_name = list(transformer_models.keys())[0]
+                                    model_pipeline = transformer_models[model_name]
+                                    
+                                    max_length = max(100, int(len(extracted_text.split()) * compression_ratio * 2))
+                                    min_length = max(30, max_length // 4)
+                                    
+                                    try:
+                                        result = model_pipeline(extracted_text, max_length=max_length, min_length=min_length)
+                                        raw_summary = result[0]['summary_text']
+                                        summary = summarizer.formatter.format_summary(raw_summary, original_name)
+                                        st.info(f"🧠 Used {model_name.upper()} Transformer (Default)")
+                                    except Exception as e:
+                                        st.warning(f"🔄 {model_name.upper()} failed: {str(e)[:30]}... using TextRank")
+                                        summary = summarizer.summarize(extracted_text, compression_ratio, original_name)
+                                else:
+                                    summary = summarizer.summarize(extracted_text, compression_ratio, original_name)
+                                    st.info("⚡ Used TextRank algorithm (Fallback)")
+                                
                         except Exception as e:
-                            st.error(f"Error during summarization: {e}")
-                            st.error(f"Error type: {type(e)}")
-                            import traceback
-                            st.error(f"Traceback: {traceback.format_exc()}")
+                            st.error(f"❌ Error during summarization: {e}")
+                            st.info("🔄 Falling back to TextRank algorithm")
+                            summary = summarizer.summarize(extracted_text, compression_ratio, original_name)
                             summary = None
                     
                     if summary:
                         st.success("✅ Summary generated successfully!")
                         
-                        # Display formatted summary
+                        # Display formatted summary in scrollable container
                         st.markdown("### 📋 Smart Summary")
-                        st.markdown("---")
-                        st.markdown(summary)
-                        st.markdown("---")
+                        
+                        # Create scrollable container with improved CSS
+                        st.markdown("""
+                        <style>
+                        .summary-container {
+                            max-height: 500px;
+                            overflow-y: auto;
+                            padding: 30px;
+                            border: 1px solid rgba(59, 130, 246, 0.3);
+                            border-radius: 15px;
+                            background: linear-gradient(135deg, rgba(30, 41, 59, 0.8) 0%, rgba(51, 65, 85, 0.8) 100%);
+                            margin: 15px 0;
+                            scrollbar-width: thin;
+                            scrollbar-color: rgba(59, 130, 246, 0.5) transparent;
+                            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
+                        }
+                        
+                        .summary-container::-webkit-scrollbar {
+                            width: 10px;
+                        }
+                        
+                        .summary-container::-webkit-scrollbar-track {
+                            background: rgba(30, 41, 59, 0.3);
+                            border-radius: 5px;
+                        }
+                        
+                        .summary-container::-webkit-scrollbar-thumb {
+                            background: linear-gradient(135deg, rgba(59, 130, 246, 0.6), rgba(147, 51, 234, 0.6));
+                            border-radius: 5px;
+                        }
+                        
+                        .summary-container::-webkit-scrollbar-thumb:hover {
+                            background: linear-gradient(135deg, rgba(59, 130, 246, 0.8), rgba(147, 51, 234, 0.8));
+                        }
+                        
+                        .summary-container p {
+                            margin: 15px 0;
+                            text-align: justify;
+                            line-height: 1.8;
+                        }
+                        
+                        .summary-container h3 {
+                            border-bottom: 2px solid rgba(59, 130, 246, 0.3);
+                            padding-bottom: 10px;
+                            margin-bottom: 20px;
+                        }
+                        </style>
+                        """, unsafe_allow_html=True)
+                        
+                        # Display summary in clean, readable format
+                        # Parse the summary to extract title and content
+                        summary_lines = summary.split('\n')
+                        title = summary_lines[0].replace('##', '').strip() if summary_lines else "Summary"
+                        content = '\n'.join(summary_lines[2:]) if len(summary_lines) > 2 else summary
+                        
+                        # Format content into proper paragraphs
+                        paragraphs = [p.strip() for p in content.split('\n\n') if p.strip()]
+                        formatted_content = ""
+                        
+                        for paragraph in paragraphs:
+                            formatted_content += f'<p style="margin: 15px 0; line-height: 1.8; text-align: justify;">{paragraph}</p>'
+                        
+                        # Display with clean formatting
+                        st.markdown(f"""
+                        <div class="summary-container">
+                            <h3 style="color: #3b82f6; margin-bottom: 20px; font-size: 1.4em;">{title}</h3>
+                            <div style="font-size: 1.1em;">
+                                {formatted_content}
+                            </div>
+                        </div>
+                        """, unsafe_allow_html=True)
                         
                         # Summary statistics
                         summary_words = len(summary.split())
@@ -913,19 +1469,17 @@ def main():
                         
                     else:
                         st.error("❌ Failed to generate summary. Please try with a different document.")
-            
-            else:
-                st.warning("⚠️ No meaningful text could be extracted from the document.")
         
         else:
-            # Show instructions when no file is uploaded
+            # Show instructions when no file is uploaded and no URL provided
             st.markdown("""
             <div class="summary-box">
                 <h3>🚀 How to Use</h3>
-                <p><strong>1.</strong> Upload your document (PDF, DOCX, or TXT)</p>
-                <p><strong>2.</strong> Adjust the summary length slider</p>
-                <p><strong>3.</strong> Click "Generate Smart Summary"</p>
-                <p><strong>4.</strong> Download your clean, intelligent summary</p>
+                <p><strong>1.</strong> Upload your document (PDF, DOCX, TXT) or paste a URL</p>
+                <p><strong>2.</strong> Choose your AI model (T5, BART, FLAN-T5)</p>
+                <p><strong>3.</strong> Adjust the summary length slider</p>
+                <p><strong>4.</strong> Click "Generate Smart Summary"</p>
+                <p><strong>5.</strong> Download your clean, intelligent summary</p>
             </div>
             """, unsafe_allow_html=True)
             
@@ -933,10 +1487,11 @@ def main():
             st.markdown("### ✨ Features")
             st.markdown("""
             - 🧹 **Advanced Text Cleaning**: Removes headers, footers, and academic jargon
-            - 🤖 **Smart Summarization**: TextRank algorithm with enhanced sentence selection
-            - 🎨 **Beautiful UI**: Dark/Light theme with modern design
-            - 📥 **Easy Download**: Get summaries as timestamped text files
-            - 🔒 **Privacy First**: All processing happens locally
+            - 🤖 **AI Models**: T5, BART, FLAN-T5 transformers with TextRank fallback
+            - 🔗 **URL Support**: Google Drive, Google Docs, Dropbox, and direct links
+            - 🎨 **Beautiful UI**: Modern dark theme with professional styling
+            - 📥 **Multi-Format Export**: Download as TXT, PDF, or DOCX
+            - 🔒 **Privacy First**: All processing happens locally (except URL downloads)
             """)
     
 
