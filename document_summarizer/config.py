@@ -9,7 +9,7 @@ class Config:
     """Configuration class for managing app settings."""
     
     # Hugging Face API Configuration
-    HUGGINGFACE_API_KEY = "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"
+    HUGGINGFACE_API_KEY = None  # Set via environment variable or user input
     
     # Model Configuration
     DEFAULT_MODEL = "t5"  # Changed from textrank to t5
