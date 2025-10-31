@@ -8,6 +8,28 @@ import numpy as np
 from collections import Counter
 import io
 from datetime import datetime
+import nltk
+
+# Download required NLTK data for cloud deployment
+@st.cache_resource
+def download_nltk_data():
+    try:
+        nltk.data.find('tokenizers/punkt')
+    except LookupError:
+        nltk.download('punkt', quiet=True)
+    
+    try:
+        nltk.data.find('corpora/stopwords')
+    except LookupError:
+        nltk.download('stopwords', quiet=True)
+    
+    try:
+        nltk.data.find('corpora/wordnet')
+    except LookupError:
+        nltk.download('wordnet', quiet=True)
+
+# Download NLTK data on startup
+download_nltk_data()
 
 # File processing imports
 try:
