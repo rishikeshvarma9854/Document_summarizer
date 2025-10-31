@@ -31,18 +31,29 @@ def download_nltk_data():
 # Download NLTK data on startup
 download_nltk_data()
 
-# File processing imports
+# File processing imports with better error handling
 try:
     import PyPDF2
     PDF_AVAILABLE = True
-except ImportError:
+except ImportError as e:
+    st.error(f"PyPDF2 not available: {e}")
     PDF_AVAILABLE = False
 
 try:
     from docx import Document
     DOCX_AVAILABLE = True
-except ImportError:
+except ImportError as e:
+    st.error(f"python-docx not available: {e}")
     DOCX_AVAILABLE = False
+
+try:
+    from reportlab.lib.pagesizes import letter
+    from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer
+    from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+    from reportlab.lib.units import inch
+    REPORTLAB_AVAILABLE = True
+except ImportError as e:
+    REPORTLAB_AVAILABLE = False
 
 class AdvancedTextCleaner:
     """Advanced text cleaning to remove headers, footers, and unwanted content."""
@@ -619,56 +630,54 @@ def create_download_buttons(text, base_filename):
     
     with col2:
         # PDF download (using reportlab if available, otherwise HTML to PDF)
-        try:
-            from reportlab.lib.pagesizes import letter
-            from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer
-            from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
-            from reportlab.lib.units import inch
-            
-            pdf_filename = f"{base_filename}_summary_{timestamp}.pdf"
-            pdf_buffer = io.BytesIO()
-            
-            doc = SimpleDocTemplate(pdf_buffer, pagesize=letter)
-            styles = getSampleStyleSheet()
-            story = []
-            
-            # Add title
-            title_style = ParagraphStyle(
-                'CustomTitle',
-                parent=styles['Heading1'],
-                fontSize=16,
-                spaceAfter=30,
-            )
-            story.append(Paragraph(f"Summary of {base_filename}", title_style))
-            story.append(Spacer(1, 12))
-            
-            # Add content
-            for line in text.split('\n'):
-                if line.strip():
-                    if line.startswith('#'):
-                        # Header
-                        story.append(Paragraph(line.replace('#', '').strip(), styles['Heading2']))
-                    elif line.startswith('•') or line.startswith('-'):
-                        # Bullet point
-                        story.append(Paragraph(line, styles['Normal']))
-                    else:
-                        # Regular text
-                        story.append(Paragraph(line, styles['Normal']))
-                    story.append(Spacer(1, 6))
-            
-            doc.build(story)
-            pdf_buffer.seek(0)
-            
-            st.download_button(
-                label="📕 Download PDF",
-                data=pdf_buffer.getvalue(),
-                file_name=pdf_filename,
-                mime="application/pdf",
-                type="primary",
-                use_container_width=True
-            )
-        except ImportError:
-            st.button("📕 PDF (Install reportlab)", disabled=True, use_container_width=True)
+        if REPORTLAB_AVAILABLE:
+            try:
+                pdf_filename = f"{base_filename}_summary_{timestamp}.pdf"
+                pdf_buffer = io.BytesIO()
+                
+                doc = SimpleDocTemplate(pdf_buffer, pagesize=letter)
+                styles = getSampleStyleSheet()
+                story = []
+                
+                # Add title
+                title_style = ParagraphStyle(
+                    'CustomTitle',
+                    parent=styles['Heading1'],
+                    fontSize=16,
+                    spaceAfter=30,
+                )
+                story.append(Paragraph(f"Summary of {base_filename}", title_style))
+                story.append(Spacer(1, 12))
+                
+                # Add content
+                for line in text.split('\n'):
+                    if line.strip():
+                        if line.startswith('#'):
+                            # Header
+                            story.append(Paragraph(line.replace('#', '').strip(), styles['Heading2']))
+                        elif line.startswith('•') or line.startswith('-'):
+                            # Bullet point
+                            story.append(Paragraph(line, styles['Normal']))
+                        else:
+                            # Regular text
+                            story.append(Paragraph(line, styles['Normal']))
+                        story.append(Spacer(1, 6))
+                
+                doc.build(story)
+                pdf_buffer.seek(0)
+                
+                st.download_button(
+                    label="📕 Download PDF",
+                    data=pdf_buffer.getvalue(),
+                    file_name=pdf_filename,
+                    mime="application/pdf",
+                    type="primary",
+                    use_container_width=True
+                )
+            except Exception as e:
+                st.button("📕 PDF (Error)", disabled=True, use_container_width=True, help=f"PDF generation error: {e}")
+        else:
+            st.button("📕 PDF (Not Available)", disabled=True, use_container_width=True, help="ReportLab not installed")
     
     with col3:
         # DOCX download
