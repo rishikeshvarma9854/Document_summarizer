@@ -744,33 +744,45 @@ def load_transformer_models():
         
         loaded_models = []
         
-        # Load T5 first (most reliable)
+        # Load T5 first (most reliable) - try without token first
         for model_name, model_path in model_configs:
             try:
-                if hf_token:
-                    model = pipeline("summarization", model=model_path, token=hf_token)
-                else:
-                    model = pipeline("summarization", model=model_path)
-                
+                # Try without token first (public models)
+                model = pipeline("summarization", model=model_path)
                 models[model_name] = model
                 loaded_models.append(model_name.upper())
                 
             except Exception as e:
-                continue
+                # If that fails, try with token if available
+                if hf_token:
+                    try:
+                        model = pipeline("summarization", model=model_path, token=hf_token)
+                        models[model_name] = model
+                        loaded_models.append(model_name.upper())
+                    except Exception as e2:
+                        continue
+                else:
+                    continue
         
         # Try to load additional models (optional)
         for model_name, model_path in additional_models:
             try:
-                if hf_token:
-                    model = pipeline("summarization", model=model_path, token=hf_token)
-                else:
-                    model = pipeline("summarization", model=model_path)
-                
+                # Try without token first (public models)
+                model = pipeline("summarization", model=model_path)
                 models[model_name] = model
                 loaded_models.append(model_name.upper())
                 
             except Exception as e:
-                continue
+                # If that fails, try with token if available
+                if hf_token:
+                    try:
+                        model = pipeline("summarization", model=model_path, token=hf_token)
+                        models[model_name] = model
+                        loaded_models.append(model_name.upper())
+                    except Exception as e2:
+                        continue
+                else:
+                    continue
         
         if models:
             st.success(f"🤖 Ready with {len(models)} model(s): {', '.join(loaded_models)}")
