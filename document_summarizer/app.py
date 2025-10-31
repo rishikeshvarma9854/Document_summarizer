@@ -728,21 +728,54 @@ def load_transformer_models():
         # Check for Hugging Face API key
         hf_token = Config.get_hf_token()
         
-        # For cloud deployment, only try to load one lightweight model
+        # Create summarization pipelines with working models
         models = {}
         
-        try:
-            # Try T5-small first (most reliable and lightweight)
-            if hf_token:
-                model = pipeline("summarization", model="t5-small", token=hf_token)
-            else:
-                model = pipeline("summarization", model="t5-small")
-            
-            models['t5'] = model
-            st.success("🤖 T5 model loaded successfully!")
+        # List of working models (in order of preference)
+        model_configs = [
+            ('t5', 't5-small'),
+        ]
+        
+        # Try to load additional models if T5 works
+        additional_models = [
+            ('bart', 'facebook/bart-large-cnn'),
+            ('flan-t5', 'google/flan-t5-small')
+        ]
+        
+        loaded_models = []
+        
+        # Load T5 first (most reliable)
+        for model_name, model_path in model_configs:
+            try:
+                if hf_token:
+                    model = pipeline("summarization", model=model_path, token=hf_token)
+                else:
+                    model = pipeline("summarization", model=model_path)
+                
+                models[model_name] = model
+                loaded_models.append(model_name.upper())
+                
+            except Exception as e:
+                continue
+        
+        # Try to load additional models (optional)
+        for model_name, model_path in additional_models:
+            try:
+                if hf_token:
+                    model = pipeline("summarization", model=model_path, token=hf_token)
+                else:
+                    model = pipeline("summarization", model=model_path)
+                
+                models[model_name] = model
+                loaded_models.append(model_name.upper())
+                
+            except Exception as e:
+                continue
+        
+        if models:
+            st.success(f"🤖 Ready with {len(models)} model(s): {', '.join(loaded_models)}")
             return models
-            
-        except Exception as model_error:
+        else:
             st.info("💡 Transformers available but models couldn't load - using TextRank!")
             return None
         
@@ -1067,8 +1100,8 @@ def main():
         st.markdown("### 🤖 AI Model Selection")
         summarization_method = st.selectbox(
             "Choose Summarization Approach",
-            ["🤖 Smart AI (Auto-detect)", "🔧 TextRank (Fast & Reliable)"],
-            help="Smart AI uses transformers if available, otherwise uses TextRank"
+            ["🧠 T5 Transformer (Default)", "📚 BART Transformer", "🚀 FLAN-T5 (Advanced)", "🔧 TextRank (Fallback)"],
+            help="Select the AI model for summarization"
         )
         
         # Compression ratio slider
@@ -1085,8 +1118,14 @@ def main():
         # Display method info
         if "TextRank" in summarization_method:
             st.info("⚡ Fast extractive summarization using graph-based ranking")
+        elif "T5" in summarization_method:
+            st.info("🧠 Advanced abstractive summarization using T5 transformer (Default)")
+        elif "BART" in summarization_method:
+            st.info("📚 High-quality abstractive summarization using BART transformer")
+        elif "FLAN-T5" in summarization_method:
+            st.info("🚀 Advanced instruction-tuned T5 model for better summarization")
         else:
-            st.info("🤖 Automatically uses the best available AI model (transformers or TextRank)")
+            st.info("🤖 AI-powered summarization with transformer models")
     
     with col2:
         st.markdown("### 📊 Document Analysis")
@@ -1168,8 +1207,8 @@ def main():
                 # Generate summary button
                 if st.button("🚀 Generate Smart Summary", type="primary", use_container_width=True):
                     
-                    # Load transformer models if Smart AI is selected
-                    if "Smart AI" in summarization_method:
+                    # Load transformer models if needed
+                    if "Transformer" in summarization_method or "FLAN-T5" in summarization_method:
                         with st.spinner("🤖 Loading AI models..."):
                             transformer_models = load_transformer_models()
                     else:
